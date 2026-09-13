@@ -35,6 +35,18 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Shaders did not compile in CI. `dxc` was only looked for under
+  `WindowsSdkVerBinPath`, which is set inside a developer command prompt and
+  nowhere else, so a plain shell never found it. The installed Windows Kits are
+  now enumerated directly, newest first, and `NF_REQUIRE_SHADERS` turns a
+  missing compiler into a configuration error instead of a warning that
+  surfaces three steps later.
+- Multi-config generators put the module in `bin/<config>/` while Ninja puts it
+  in `bin/`, so packaging and artifact upload would have missed it on any
+  machine using the Visual Studio generator. Every configuration is now pinned
+  to the same directory, and both the local verifier and CI check that the
+  module is where packaging expects it.
+
 - The scanner listed driver packages, text editors and Electron applications as
   games. Real games are now identified by executable size, install size, engine
   runtimes and packed assets, with Chromium and known applications excluded.

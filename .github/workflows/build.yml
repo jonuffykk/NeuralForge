@@ -31,7 +31,7 @@ jobs:
       publish:    ${{ steps.parse.outputs.publish }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -114,7 +114,7 @@ jobs:
         os: [windows-latest, ubuntu-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNF_BUILD_MODULE=OFF
       - run: cmake --build build --config Release
       - run: ctest --test-dir build -C Release --output-on-failure
@@ -124,7 +124,7 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Parse every script
         shell: pwsh
@@ -178,13 +178,25 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - run: >
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           -DNF_BUILD_MODULE=ON -DNF_WITH_IMGUI=OFF -DNF_WITH_DIRECTML=OFF
+          -DNF_REQUIRE_SHADERS=ON
 
       - run: cmake --build build --config Release
+
+      - name: Confirm the outputs landed where packaging expects them
+        shell: pwsh
+        run: |
+          $dll = 'build/bin/NeuralForge.dll'
+          if (-not (Test-Path $dll)) {
+            Write-Host "::error::$dll missing. A multi-config generator may have added a configuration subdirectory."
+            Get-ChildItem build/bin -Recurse -File | ForEach-Object { Write-Host "  found $($_.FullName)" }
+            exit 1
+          }
+          Write-Host "module at $dll, $([int]((Get-Item $dll).Length / 1KB)) KB"
 
       - name: Confirm the shaders compiled
         shell: pwsh
@@ -208,7 +220,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: No vendor binaries
         run: |
@@ -261,7 +273,7 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -273,6 +285,7 @@ jobs:
         run: >
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           -DNF_BUILD_MODULE=ON -DNF_WITH_IMGUI=OFF -DNF_WITH_DIRECTML=OFF
+          -DNF_REQUIRE_SHADERS=ON
 
       - run: cmake --build build --config Release
       - run: ctest --test-dir build -C Release --output-on-failure

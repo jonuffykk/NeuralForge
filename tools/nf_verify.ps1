@@ -63,6 +63,56 @@ if (-not $SkipBuild) {
         Write-Host "    all $($expected.Count) compiled" -ForegroundColor Green
         return $true
     }
+
+    Step 'Multi-config generator lands outputs in the same place' {
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        if (-not (Test-Path $vswhere)) {
+            Write-Host '    skipped, no Visual Studio installer found' -ForegroundColor Yellow
+            return $true
+        }
+
+        $vs = & $vswhere -latest -products * `
+                -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+                -property installationPath
+        if (-not $vs) {
+            Write-Host '    skipped, no C++ toolset' -ForegroundColor Yellow
+            return $true
+        }
+
+        $cmakeDir = "$vs\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
+        if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) { $env:PATH = "$cmakeDir;$env:PATH" }
+
+        $out = Join-Path $root 'build-multiconfig'
+        Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
+
+        $generator = if ($vs -match '2026|\\18\\') { 'Visual Studio 18 2026' } else { 'Visual Studio 17 2022' }
+
+        & cmake -S $root -B $out -G $generator -A x64 `
+                -DNF_BUILD_MODULE=ON -DNF_WITH_IMGUI=OFF -DNF_WITH_DIRECTML=OFF `
+                -DNF_REQUIRE_SHADERS=ON 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "    configure failed with $generator" -ForegroundColor Red
+            return $false
+        }
+
+        & cmake --build $out --config Release 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "    build failed with $generator" -ForegroundColor Red
+            return $false
+        }
+
+        $dll = Join-Path $out 'bin\NeuralForge.dll'
+        if (-not (Test-Path $dll)) {
+            Write-Host '    NeuralForge.dll is not in bin/. A configuration subdirectory was added.' -ForegroundColor Red
+            Get-ChildItem (Join-Path $out 'bin') -Recurse -File -ErrorAction SilentlyContinue |
+                ForEach-Object { Write-Host "      found $($_.FullName)" -ForegroundColor Red }
+            return $false
+        }
+
+        Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "    $generator puts the module in bin/ like Ninja does" -ForegroundColor Green
+        return $true
+    }
 }
 
 Step 'Installer tests' {

@@ -6,24 +6,37 @@ project(NeuralForge
     LANGUAGES   CXX
     DESCRIPTION "Unified DLSS-5 neural rendering runtime")
 
-option(NF_WITH_IMGUI    "Build the in-game overlay"            ON)
-option(NF_WITH_NVAPI    "Use NVAPI for authoritative GPU ID"   OFF)
-option(NF_WITH_AGS      "Use AMD AGS for authoritative GPU ID" OFF)
-option(NF_WITH_DIRECTML "Build the DirectML portable backend"  ON)
-option(NF_BUILD_TESTS   "Build unit tests"                     ON)
-option(NF_BUILD_MODULE  "Build the injectable DLL"             ON)
+option(NF_WITH_IMGUI      "Build the in-game overlay"             ON)
+option(NF_WITH_NVAPI      "Use NVAPI for authoritative GPU ID"    OFF)
+option(NF_WITH_AGS        "Use AMD AGS for authoritative GPU ID"  OFF)
+option(NF_WITH_DIRECTML   "Build the DirectML portable backend"   ON)
+option(NF_BUILD_TESTS     "Build unit tests"                      ON)
+option(NF_BUILD_MODULE    "Build the injectable DLL"              ON)
+option(NF_REQUIRE_SHADERS "Fail configuration when dxc is absent" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Vendor-neutral. Builds and tests on any platform with a C++20 compiler.
+# Multi-config generators append the configuration name to the output
+# directory, which single-config generators do not. Pin every configuration to
+# the same place so packaging and CI do not have to know which generator ran.
+function(nf_pin_output_directory target subdirectory)
+    set_target_properties(${target} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${subdirectory}")
+
+    foreach(config ${CMAKE_CONFIGURATION_TYPES})
+        string(TOUPPER ${config} upper)
+        set_target_properties(${target} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY_${upper} "${CMAKE_BINARY_DIR}/${subdirectory}")
+    endforeach()
+endfunction()
+
 set(NF_PORTABLE_SOURCES
     src/nf_gpu.cpp
     src/nf_config.cpp
     src/nf_schedule.cpp)
 
-# Needs D3D12 and the Windows SDK.
 set(NF_MODULE_SOURCES
     src/nf_backend.cpp
     src/nf_pipeline.cpp
@@ -36,9 +49,25 @@ set(NF_SHADER_ENTRIES
     CS_Extract CS_BlurBand CS_Reproject CS_Composite CS_CompactTiles)
 
 if(NF_BUILD_MODULE AND WIN32)
-    find_program(NF_DXC dxc HINTS "$ENV{WindowsSdkVerBinPath}/x64" "$ENV{VULKAN_SDK}/Bin")
+    # WindowsSdkVerBinPath is only set inside a developer command prompt, so a
+    # plain shell needs the installed kits enumerated directly. Newest first.
+    file(GLOB NF_WINDOWS_KIT_BINS
+        "$ENV{ProgramFiles\(x86\)}/Windows Kits/10/bin/*/x64"
+        "$ENV{ProgramFiles}/Windows Kits/10/bin/*/x64"
+        "C:/Program Files (x86)/Windows Kits/10/bin/*/x64")
+    list(SORT NF_WINDOWS_KIT_BINS)
+    list(REVERSE NF_WINDOWS_KIT_BINS)
+
+    find_program(NF_DXC
+        NAMES dxc
+        HINTS
+            "$ENV{WindowsSdkVerBinPath}/x64"
+            "$ENV{VULKAN_SDK}/Bin"
+            ${NF_WINDOWS_KIT_BINS})
 
     if(NF_DXC)
+        message(STATUS "dxc: ${NF_DXC}")
+
         set(NF_SHADER_OUTPUTS "")
         foreach(entry ${NF_SHADER_ENTRIES})
             set(out "${CMAKE_BINARY_DIR}/shaders/${entry}.dxil")
@@ -52,9 +81,17 @@ if(NF_BUILD_MODULE AND WIN32)
                 VERBATIM)
             list(APPEND NF_SHADER_OUTPUTS ${out})
         endforeach()
-        add_custom_target(nf_shaders DEPENDS ${NF_SHADER_OUTPUTS})
+
+        add_custom_target(nf_shaders ALL DEPENDS ${NF_SHADER_OUTPUTS})
+    elseif(NF_REQUIRE_SHADERS)
+        message(FATAL_ERROR
+            "dxc was not found and NF_REQUIRE_SHADERS is on. Install the Windows "
+            "SDK, or set NF_REQUIRE_SHADERS=OFF to build the module without "
+            "compiled shaders.")
     else()
-        message(WARNING "dxc not found. Shaders will not compile; install the Windows SDK.")
+        message(WARNING
+            "dxc not found, so the residual pipeline will have no shaders. "
+            "Install the Windows SDK.")
         add_custom_target(nf_shaders)
     endif()
 
@@ -63,12 +100,10 @@ if(NF_BUILD_MODULE AND WIN32)
 
     add_dependencies(NeuralForge nf_shaders)
     set_source_files_properties(${NF_SHADER} PROPERTIES HEADER_FILE_ONLY TRUE)
-
-    set_target_properties(NeuralForge PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    nf_pin_output_directory(NeuralForge bin)
 
     target_include_directories(NeuralForge PRIVATE src)
-    target_link_libraries(NeuralForge PRIVATE d3d12 dxgi dxguid)
+    target_link_libraries(NeuralForge PRIVATE d3d12 d3d11 dxgi dxguid)
     target_compile_definitions(NeuralForge PRIVATE
         WIN32_LEAN_AND_MEAN NOMINMAX NF_VERSION="${PROJECT_VERSION}")
 
@@ -112,6 +147,7 @@ if(NF_BUILD_TESTS)
     add_executable(nf_tests tests/nf_tests.cpp ${NF_PORTABLE_SOURCES})
     target_include_directories(nf_tests PRIVATE src)
     target_compile_definitions(nf_tests PRIVATE NF_NO_D3D)
+    nf_pin_output_directory(nf_tests bin)
 
     if(MSVC)
         target_compile_options(nf_tests PRIVATE /W4 /permissive-)
