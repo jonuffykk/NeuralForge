@@ -246,10 +246,3 @@ The four cost levers came from the community forks. The residual placement is th
 disagreement, and it is the only genuinely new thing here.
 
 See [docs/CREDITS.md](docs/CREDITS.md).
-
----
-
-## Licence
-
-MIT, © 2026 Jonuffy. No vendor code, no extracted weights, no redistributed
-runtime.
