@@ -1,0 +1,52 @@
+# Build
+build/
+out/
+cmake-build-*/
+*.dir/
+Debug/
+Release/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.dxil
+*.cso
+
+# Vendor runtimes -- NEVER commit these.
+# NeuralForge does not ship, mirror or redistribute any vendor runtime, and a
+# 158 MB proprietary binary in git history cannot be un-shipped.
+# See runtimes/README.md.
+runtimes/*
+!runtimes/README.md
+*.nfw
+nvngx*.dll
+nvngx*.bin
+
+# Vendored dependencies
+third_party/
+
+# Local config -- users edit configs/neuralforge.ini in their game directory,
+# not here. The committed copy is the documented default.
+configs/neuralforge.local.ini
+*.user.ini
+
+# Tooling
+.vs/
+.vscode/
+.idea/
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Captures and logs
+*.rdc
+*.nsight-gfxcap
+*.log
+nf_capture_*/

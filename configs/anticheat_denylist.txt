@@ -1,0 +1,87 @@
+# NeuralForge anti-cheat denylist
+# ============================================================================
+# One executable name per line, case-insensitive. Lines starting with # and
+# blank lines are ignored.
+#
+# A match aborts initialisation BEFORE any hook is installed.
+#
+# This list is a convenience, not the primary defence. The primary defence is
+# the runtime check for resident anti-cheat modules (EasyAntiCheat, BattlEye,
+# Vanguard, PunkBuster) in nf_hook.cpp, which catches titles that are not
+# listed here.
+#
+# WHY THIS EXISTS
+# ---------------
+# NeuralForge loads into a game process and modifies its render pipeline. In a
+# protected multiplayer title that is indistinguishable from what a cheat does,
+# and the consequence lands on the player's account, not on this project.
+#
+# Nothing in NeuralForge attempts to hide from anti-cheat, detect whether it is
+# being observed, or behave differently when it is. If a title does not want
+# third-party code in its process, the correct response is to stay out.
+#
+# CONTRIBUTING
+# ------------
+# Additions are always accepted. Removals need evidence that the title has no
+# anti-cheat at all, not merely that someone got away with it once.
+#
+# A title with a single-player mode and a protected multiplayer mode belongs on
+# this list. The executable is usually shared, and "I only play the campaign"
+# is not something this code can verify.
+
+# --- Competitive shooters ---------------------------------------------------
+valorant.exe
+valorant-win64-shipping.exe
+csgo.exe
+cs2.exe
+r5apex.exe
+destiny2.exe
+rainbowsix.exe
+rainbowsix_vulkan.exe
+overwatch.exe
+thefinals.exe
+delta_force.exe
+xdefiant.exe
+pubg.exe
+tslgame.exe
+
+# --- Battle royale / survival -----------------------------------------------
+fortniteclient-win64-shipping.exe
+rustclient.exe
+dayz_x64.exe
+escapefromtarkov.exe
+huntgame.exe
+theisle.exe
+
+# --- Online RPG / MMO -------------------------------------------------------
+destiny2.exe
+lostark.exe
+tl.exe
+newworld.exe
+bnsr.exe
+gamewarden.exe
+
+# --- Titles with shared single/multiplayer executables ----------------------
+# These have campaigns. They also have protected multiplayer, and the same
+# binary serves both.
+cod.exe
+modernwarfare.exe
+blackops.exe
+battlefield2042.exe
+bf2042.exe
+halo_infinite.exe
+helldivers2.exe
+eldenring.exe
+armoredcore6.exe
+gta5.exe
+gta5_enhanced.exe
+rdr2.exe
+
+# --- Sports / annual releases -----------------------------------------------
+# Frequently ship online modes with anti-cheat even when the offline mode is
+# the headline feature.
+nba2k27.exe
+nba2k26.exe
+fc25.exe
+fc26.exe
+madden25.exe

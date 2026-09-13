@@ -1,0 +1,18 @@
+* text=auto eol=lf
+
+*.ps1  text eol=crlf
+*.psm1 text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ini  text eol=crlf
+
+*.png  binary
+*.jpg  binary
+*.dll  binary
+*.exe  binary
+*.dxil binary
+*.nfw  binary
+
+*.md        linguist-documentation
+tests/*     linguist-vendored=false
+src/*.hlsl  linguist-language=HLSL

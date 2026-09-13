@@ -1,0 +1,69 @@
+name: Bug report
+description: Something behaves differently from what the documentation says
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please check two things that are not bugs:
+
+        - Slow performance on RTX 20 or AMD. Those numbers are documented in
+          `docs/GPU_COMPATIBILITY.md` and expected.
+        - A game with no DLSS, FSR or XeSS. The stage needs the motion vectors
+          that call provides, so a game without one has no interception point.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: probe
+    attributes:
+      label: Hardware probe
+      description: Output of `.\tools\nf_probe.ps1`
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: status
+    attributes:
+      label: Overlay status line
+      description: The line at the top of the in-game overlay, or the installer window.
+    validations:
+      required: true
+
+  - type: input
+    id: game
+    attributes:
+      label: Game and upscaler
+      placeholder: e.g. Cyberpunk 2077, DLSS Quality
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Config
+      description: Your `neuralforge.ini`
+      render: ini
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce
+      description: Numbered steps, if it is reproducible.
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmations
+      options:
+        - label: This is a single-player title with no anti-cheat
+          required: true
+        - label: I supplied my own runtime and `nf_probe.ps1 -CheckRuntime` reports a valid signature
+          required: false

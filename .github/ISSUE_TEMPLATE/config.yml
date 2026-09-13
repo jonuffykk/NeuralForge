@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Where do I get the runtime?
+    url: https://github.com/Jonuffy/NeuralForge/blob/main/runtimes/README.md
+    about: NeuralForge never ships it. Supply your own copy from software you licence.
+  - name: My RTX 20 or AMD card is slow
+    url: https://github.com/Jonuffy/NeuralForge/blob/main/docs/GPU_COMPATIBILITY.md
+    about: Those numbers are documented and expected. Not a bug.
+  - name: Security vulnerability
+    url: https://github.com/Jonuffy/NeuralForge/security/advisories/new
+    about: Report privately rather than opening a public issue.

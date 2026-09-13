@@ -1,0 +1,58 @@
+name: Game compatibility
+description: A game is misdetected, or should be on the anti-cheat denylist
+labels: [compatibility]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is wrong
+      options:
+        - This game has anti-cheat and should be denylisted
+        - The installer shows the wrong graphics API
+        - The installer does not find this game at all
+        - The installer lists something that is not a game
+        - The installer found it but the status is wrong
+    validations:
+      required: true
+
+  - type: input
+    id: game
+    attributes:
+      label: Game
+      placeholder: e.g. Watch Dogs 2
+    validations:
+      required: true
+
+  - type: input
+    id: exe
+    attributes:
+      label: Executable name
+      placeholder: e.g. WatchDogs2.exe
+    validations:
+      required: true
+
+  - type: dropdown
+    id: store
+    attributes:
+      label: Where it came from
+      options: [Steam, Epic, GOG, EA, Ubisoft, Xbox, Standalone installer, Other]
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: |
+        For a denylist request, name the anti-cheat and how you confirmed it.
+        For a misdetection, paste the row the installer showed.
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        Denylist additions are always accepted. Removals need evidence that the
+        title has no anti-cheat at all, not that someone got away with it once.
+        A game with a single-player mode and a protected multiplayer mode
+        belongs on the list, because the executable is usually shared.

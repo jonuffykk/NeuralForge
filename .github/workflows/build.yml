@@ -1,0 +1,396 @@
+name: Build
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: 'Publish even if the tag already exists'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  version:
+    name: Read CHANGELOG
+    runs-on: ubuntu-latest
+    outputs:
+      version:    ${{ steps.parse.outputs.version }}
+      tag:        ${{ steps.parse.outputs.tag }}
+      exists:     ${{ steps.parse.outputs.exists }}
+      prerelease: ${{ steps.parse.outputs.prerelease }}
+      publish:    ${{ steps.parse.outputs.publish }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Parse the topmost released version
+        id: parse
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version=$(sed -n 's/^## \[\([0-9][^]]*\)\].*/\1/p' CHANGELOG.md | head -1)
+
+          if [ -z "$version" ]; then
+            echo "::notice::No released version at the top of CHANGELOG.md, only Unreleased."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "version=" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          tag="v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag"         >> "$GITHUB_OUTPUT"
+
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            exists=true
+          else
+            exists=false
+          fi
+          echo "exists=$exists" >> "$GITHUB_OUTPUT"
+
+          case "$version" in
+            *-alpha*|*-beta*|*-rc*|0.*) prerelease=true ;;
+            *)                          prerelease=false ;;
+          esac
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+          publish=false
+          if [ "${{ github.ref }}" = "refs/heads/main" ] && [ "$exists" = "false" ]; then
+            publish=true
+          fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+             [ "${{ github.event.inputs.force_release }}" = "true" ]; then
+            publish=true
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+          echo "version $version, tag $tag, exists $exists, publish $publish"
+
+      - name: Extract the section for this version
+        if: steps.parse.outputs.version != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          awk -v want="## [${{ steps.parse.outputs.version }}]" '
+            index($0, want) == 1 { grab = 1; next }
+            grab && /^## \[/      { exit }
+            grab                  { print }
+          ' CHANGELOG.md > changelog-section.md
+
+          if [ ! -s changelog-section.md ]; then
+            echo "::error::CHANGELOG.md has no body under ${{ steps.parse.outputs.version }}"
+            exit 1
+          fi
+          echo "extracted $(wc -l < changelog-section.md) lines"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.parse.outputs.version != ''
+        with:
+          name: changelog-section
+          path: changelog-section.md
+
+  logic:
+    name: Logic tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNF_BUILD_MODULE=OFF
+      - run: cmake --build build --config Release
+      - run: ctest --test-dir build -C Release --output-on-failure
+
+  installer:
+    name: Installer tests
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse every script
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName, [ref]$null, [ref]$errors)
+            if ($errors) {
+              $failed = $true
+              Write-Host "::error file=$($_.FullName)::$($errors[0].Message)"
+            } else {
+              Write-Host "ok  $($_.Name)"
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Run the installer test suite
+        shell: powershell
+        run: .\tests\Core.Tests.ps1
+
+      - name: Validate the installer window
+        shell: powershell
+        run: |
+          Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+          $txt = Get-Content .\installer\NeuralForge.ps1 -Raw
+          if ($txt -notmatch "(?s)\`$Script:Xaml = @'\r?\n(.*?)\r?\n'@") {
+            Write-Host '::error::XAML block not found'; exit 1
+          }
+          $reader = New-Object System.Xml.XmlNodeReader ([xml]$Matches[1])
+          $win = [Windows.Markup.XamlReader]::Load($reader)
+          $required = @('GpuName','GpuTier','GameGrid','Detail','Status','Install',
+                        'Uninstall','Rescan','AddFolder','Structure','Tone','Budget',
+                        'Scale','Passes','Cadence','Selective','AutoTune')
+          $missing = @($required | Where-Object { -not $win.FindName($_) })
+          if ($missing) {
+            Write-Host "::error::missing controls: $($missing -join ', ')"; exit 1
+          }
+          Write-Host "window loads, $($required.Count) controls resolve"
+
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
+          Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error | Format-Table -AutoSize
+
+  module:
+    name: Module and shaders
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          -DNF_BUILD_MODULE=ON -DNF_WITH_IMGUI=OFF -DNF_WITH_DIRECTML=OFF
+
+      - run: cmake --build build --config Release
+
+      - name: Confirm the shaders compiled
+        shell: pwsh
+        run: |
+          $expected = @('CS_Extract','CS_BlurBand','CS_Reproject','CS_Composite','CS_CompactTiles')
+          $missing = @($expected | Where-Object { -not (Test-Path "build/shaders/$_.dxil") })
+          if ($missing) {
+            Write-Host "::error::shaders did not compile: $($missing -join ', ')"; exit 1
+          }
+          Write-Host "all $($expected.Count) shaders compiled"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: module
+          path: |
+            build/bin/*.dll
+            build/shaders/*.dxil
+
+  hygiene:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No vendor binaries
+        run: |
+          set -e
+          found=0
+          for pattern in 'nvngx*.dll' '*.nfw' 'libxess*.dll' 'amd_fidelityfx*.dll' '*.trt' '*.onnx'; do
+            hits=$(find . -path ./.git -prune -o -iname "$pattern" -print)
+            if [ -n "$hits" ]; then
+              echo "::error::vendor binary in tree: $hits"
+              found=1
+            fi
+          done
+          big=$(find . -path ./.git -prune -o -type f -size +20M -print)
+          if [ -n "$big" ]; then
+            echo "::error::file over 20 MB, confirm it is not a model: $big"
+            found=1
+          fi
+          [ "$found" -eq 0 ]
+          echo "Clean. No vendor runtime, weights or model blobs."
+
+      - name: Licence headers and no stray comments
+        run: |
+          set -e
+          bad=0
+          for f in src/*.cpp src/*.h src/*.hlsl tests/*.cpp; do
+            head -1 "$f" | grep -q 'SPDX-License-Identifier: MIT' || {
+              echo "::error file=$f::missing SPDX header"; bad=1; }
+            sed -n '2p' "$f" | grep -q 'Copyright (c) 2026 Jonuffy' || {
+              echo "::error file=$f::missing copyright line"; bad=1; }
+            count=$(grep -c '^[[:space:]]*//' "$f" || true)
+            if [ "$count" -ne 2 ]; then
+              echo "::error file=$f::expected exactly 2 comment lines, found $count"
+              bad=1
+            fi
+          done
+          [ "$bad" -eq 0 ]
+          echo "Every source file carries its two-line header and nothing else."
+
+      - name: CHANGELOG is maintained
+        run: |
+          set -e
+          grep -q '^## \[Unreleased\]' CHANGELOG.md || {
+            echo '::error::CHANGELOG.md needs an Unreleased section'; exit 1; }
+          echo "CHANGELOG has an Unreleased section."
+
+  release:
+    name: Publish ${{ needs.version.outputs.tag }}
+    needs: [version, logic, installer, module, hygiene]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: changelog-section
+
+      - name: Build
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          -DNF_BUILD_MODULE=ON -DNF_WITH_IMGUI=OFF -DNF_WITH_DIRECTML=OFF
+
+      - run: cmake --build build --config Release
+      - run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Stage package
+        shell: pwsh
+        run: |
+          $stage = 'stage/NeuralForge'
+          New-Item -ItemType Directory -Force -Path `
+            "$stage/configs","$stage/docs","$stage/installer","$stage/tools",`
+            "$stage/runtimes","$stage/shaders" | Out-Null
+
+          Copy-Item build/bin/*.dll       $stage
+          Copy-Item build/shaders/*.dxil  "$stage/shaders"
+          Copy-Item configs/*             "$stage/configs"
+          Copy-Item docs/*.md             "$stage/docs"
+          Copy-Item installer/*.ps1       "$stage/installer"
+          Copy-Item tools/*.ps1           "$stage/tools"
+          Copy-Item runtimes/README.md    "$stage/runtimes"
+          Copy-Item README.md,LICENSE,CHANGELOG.md,NeuralForge.bat $stage
+
+      - name: Verify the archive ships no vendor runtime
+        shell: pwsh
+        run: |
+          $bad = Get-ChildItem stage -Recurse -File | Where-Object {
+            $_.Name -match '(?i)^(nvngx|libxess|amd_fidelityfx)' -or
+            $_.Extension -in '.nfw','.onnx','.trt' -or
+            $_.Length -gt 20MB
+          }
+          if ($bad) {
+            $bad | ForEach-Object { Write-Host "::error::would redistribute $($_.Name)" }
+            exit 1
+          }
+          Write-Host 'Clean. No vendor runtime or weights in the archive.'
+
+      - name: Archive
+        id: archive
+        shell: pwsh
+        run: |
+          $zip = "NeuralForge-${{ needs.version.outputs.tag }}.zip"
+          Compress-Archive -Path stage/NeuralForge -DestinationPath $zip -CompressionLevel Optimal
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
+          "$hash  $zip" | Set-Content "$zip.sha256"
+          "zip=$zip"   | Out-File $env:GITHUB_OUTPUT -Append
+          "hash=$hash" | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Compose release notes
+        shell: pwsh
+        run: |
+          $section = Get-Content changelog-section.md -Raw
+
+          $notes = @()
+          $notes += '## Install'
+          $notes += ''
+          $notes += '1. Download and extract the zip.'
+          $notes += '2. Run **NeuralForge.bat**.'
+          $notes += '3. Supply your own neural rendering runtime. See `runtimes/README.md`.'
+          $notes += '4. Launch the game, enable its upscaler, press **Insert**.'
+          $notes += ''
+
+          if ($section -match '(?m)^### Breaking changes') {
+            $notes += '> **This release contains breaking changes.** Read the section below before upgrading.'
+            $notes += ''
+          }
+
+          if ('${{ needs.version.outputs.prerelease }}' -eq 'true') {
+            $notes += '> **Pre-release.** The neural rendering stage may not run end to end. Read the limitations.'
+            $notes += ''
+          }
+
+          if ($section -match '(?m)^### Known limitations') {
+            $notes += '> Known limitations are listed below and are not bugs.'
+            $notes += ''
+          }
+
+          $notes += '## Changes'
+          $notes += ''
+          $notes += $section.TrimEnd()
+          $notes += ''
+          $notes += '## Before you install'
+          $notes += ''
+          $notes += '**Single-player titles only.** NeuralForge modifies a game''s render pipeline'
+          $notes += 'from inside its process. In an anti-cheat protected title that is'
+          $notes += 'indistinguishable from a cheat. Setup refuses rather than warns.'
+          $notes += ''
+          $notes += '**The runtime is not included and never will be.** CI blocks any archive that'
+          $notes += 'contains one.'
+          $notes += ''
+          $notes += '## Checksum'
+          $notes += ''
+          $notes += '```'
+          $notes += '${{ steps.archive.outputs.hash }}  ${{ steps.archive.outputs.zip }}'
+          $notes += '```'
+
+          $notes -join "`n" | Set-Content RELEASE_NOTES.md -Encoding utf8
+          Write-Host "notes: $((Get-Content RELEASE_NOTES.md).Count) lines"
+
+      - name: Tag
+        shell: bash
+        run: |
+          set -e
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          if git rev-parse "${{ needs.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "tag already exists, reusing it"
+          else
+            git tag -a "${{ needs.version.outputs.tag }}" \
+              -m "NeuralForge ${{ needs.version.outputs.version }}"
+            git push origin "${{ needs.version.outputs.tag }}"
+            echo "created and pushed ${{ needs.version.outputs.tag }}"
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name:   ${{ needs.version.outputs.tag }}
+          name:       NeuralForge ${{ needs.version.outputs.version }}
+          body_path:  RELEASE_NOTES.md
+          prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
+          files: |
+            ${{ steps.archive.outputs.zip }}
+            ${{ steps.archive.outputs.zip }}.sha256
